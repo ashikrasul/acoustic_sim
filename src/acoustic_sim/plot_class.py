@@ -63,7 +63,7 @@ class plot():
     def plotPath(self):
         plt.figure(0)
         plt.scatter(self.GPSx, self.GPSy, s = 2, color = "k")
-        plt.scatter(self.Filterx,self.Filtery, s = 2, c = self.timeGPS)
+        sc = plt.scatter(self.Filterx,self.Filtery, s = 2, c = self.timeFilter)
         plt.scatter(self.Anchor1[0], self.Anchor1[1], marker="X", color ="y")
         plt.scatter(self.Anchor2[0], self.Anchor2[1], marker="X", color ="b")
         plt.scatter(self.Anchor3[0], self.Anchor3[1], marker="X", color ="g")
@@ -75,7 +75,7 @@ class plot():
         plt.title("Path GPS/ Filter")
         plt.xlabel("X-Koordinaten [m]")
         plt.ylabel("Y-Koordinaten [m]")
-        plt.colorbar(label = "Time [s]")
+        plt.colorbar(sc, label = "Time [s]")
     
     def plotXoverTime(self):
         plt.figure(3)

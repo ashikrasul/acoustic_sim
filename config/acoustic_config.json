@@ -16,9 +16,9 @@
             "numberAnchor": 4,
             "FrequencyAcousticSim": 100,
             "MeasErrLoc": 0,
-            "MeasErrScale": 0.0,
+            "MeasErrScale": 0,
             "SimulationPath": true,
-            "RosRun": true
+            "RosRun": false
 
         },
         {

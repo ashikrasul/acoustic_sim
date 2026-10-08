@@ -22,6 +22,8 @@ import json
 class localisationSimulation():
     def __init__(self):
 
+        # Load configuration files relative to this Python module so the class
+        # works both from the source tree and from an installed ROS package.
         tmp = os.path.dirname(__file__)
         file_path_filter = os.path.join(tmp, '../../config/acoustic_config.json')
         f = open(file_path_filter)
@@ -46,7 +48,7 @@ class localisationSimulation():
         self.covarPre = None
         self.p_mat = None 
     
-        # settings from Configfile
+        # Read acoustic timing settings and select the configured Kalman filter.
         self.packetLengthResponse = self.acoustic_config["config"][0]["PacketLengthResponse"]
         self.publishDelay = self.acoustic_config["config"][0]["PublishDelay"]
         self.filter = self.filter_config["config"][0]["filterTyp"]
@@ -58,20 +60,23 @@ class localisationSimulation():
             self.p_mat_0 = np.array(self.filter_config["config"][2]["settings"]["InitCovar"])
 
         else: print("[Localisation_sim] Wrong Filter selected")
+        # Measurement-noise values used by the depth and range updates.
         self.w_mat_depth = self.filter_config["config"][2]["settings"]["Qt_depth"]
         self.w_mat_dist = self.filter_config["config"][2]["settings"]["Qt_dist"]
         
-        # List to handle data
+        # Keep recent filter snapshots so delayed acoustic measurements can be
+        # applied at their original time and the newer history can be replayed.
         self.dataBag = deque([])
         self.lenDataBag = self.filter_config["config"][0]["lengthDatabag"]
         
-        # List for simulation
+        # These lists are reserved for storing simulation results.
         self.xest = []
         self.yest = []
         self.zest = []
         self.timeest = []
 
-        # filter instances
+        # The state is [x, y, z]. The process model integrates global velocity,
+        # while the measurement model converts position into range/depth values.
         self.measurement_model = MeasurementModelDistances(1,1,1,1)
         self.process_model = ProcessModelVelecitiesGlobal(3) # 3 = dim_state
         if self.filter == "UKF":
@@ -81,12 +86,18 @@ class localisationSimulation():
             self.Kalmanfilter = EKF(self.measurement_model, self.process_model, self.x0, self.p_mat_0)  # prediction and update done in this instance
      
 
-    def fillDatabag(self, list): # list = [t, preInput, x_est, p_mat,]
+    def fillDatabag(self, list):
+        # Each entry is [time, velocity_input, depth, state_estimate, covariance].
+        # The oldest snapshot is discarded once the configured history length
+        # is exceeded.
         self.dataBag.append(list)
         if len(self.dataBag)> self.lenDataBag:
             self.dataBag.popleft()
 
     def recalculateState(self, correctedTime, measurements):
+        # Acoustic ranges are published after the physical measurement time.
+        # Find the newest saved snapshot at or before correctedTime by walking
+        # backward through the deque.
         numberIterations = 0
         for i in range(len(self.dataBag)):
             if correctedTime >= self.dataBag[-i-1][0]:
@@ -99,46 +110,54 @@ class localisationSimulation():
             else:
                 print("Error: [Localisation_Sim]; no matching timestamp found") 
 
-        # x_est, p_mat, t / databag: [self.t, preInput, depth, self.x_est, self.p_mat]false
+        # Restore the historical state and advance it to the range measurement.
+        # The saved entry layout is [time, velocity, depth, state, covariance].
         self.setFilter(self.dataBag[-numberIterations-1][3], self.dataBag[-numberIterations-1][4], self.dataBag[-numberIterations-1][0])
         self.update(correctedTime, self.dataBag[-numberIterations-1][1],measurements)
         
+        # Replay all inputs that occurred after the delayed measurement so the
+        # filter ends at the current simulation time rather than in the past.
         for i in range(numberIterations):
             self.xest = self.predict(self.dataBag[-numberIterations+i][0], self.dataBag[-numberIterations+i][1], self.dataBag[-numberIterations+i][2])
 
     def setFilter (self, x_est, p_mat, t):
-
+        # Restore all three parts of the filter's temporal state before replay.
         self.Kalmanfilter.set_state(x_est)
         self.Kalmanfilter.set_covar(p_mat)
         self.Kalmanfilter.set_time(t)
         
     def update(self, correctedTime, preInput, measurements):
-        
+        # First predict from the restored snapshot to the measurement time,
+        # then correct the position using the beacon range.
         self.Kalmanfilter.predict(correctedTime, preInput)  # launch prediction step with time stamp and noisy velocity; 
         self.x_est, self.p_mat, z = self.Kalmanfilter.update_dist(measurements, self.w_mat_dist) # launch update step with published data; return: self.x_est = updated state, z = delta between z and zhat       
 
     def predict(self, t, preInput, depth): # just a function for debugging and to have a camparison
-        
+        # Propagate position using the supplied global velocity and elapsed time.
         self.x_est, self.p_mat = self.Kalmanfilter.predict(t, preInput)  # launch prediction step with time stamp and noisy velocity; return: x = predicted state, p = predicted covariance
+        # Depth is treated as a direct measurement of the z component.
         self.x_est, self.p_mat = self.Kalmanfilter.update_depth(depth, self.w_mat_depth)
             
 
     def locate(self, preInput, t, depth, meas):
-        
+        # This method is called once per simulation/update tick.
         self.t = t
         self.dt = self.t-self.last_t
         self.last_t = self.t
                 
-        # If a range is published a prediction and update step will be launched
+        # If a delayed acoustic range is available, rewind and replay history.
         if meas is not None:
-            # meas: Beacon Index (int), Beacon coordinates (array), measured distance (float), time stamp (float)
+            # Expected measurement fields include beacon position, measured
+            # distance, publication time, and response-packet duration.
             correctedTime = meas["time_published"] - meas["PacketLengthResponse"]  # get time stamp
             beacon = meas["ModemPos"]
             dist = meas["dist"]
             measurements = [beacon, dist] # Position Beacon, Distance
             self.recalculateState(correctedTime, measurements)
 
-        else:# n = frequency of acoustic simulation / frequency of prediction steps
+        else:
+            # No range update this tick: perform the normal prediction and
+            # depth correction using the current time and vehicle inputs.
             self.predict(self.t, preInput, depth)
         
         list = [self.t, preInput, depth, self.x_est, self.p_mat]
@@ -146,6 +165,7 @@ class localisationSimulation():
         return self.x_est
     
     def getBeaconPos(self, BeaconIndex):
+        # Look up an anchor's fixed position by its modem ID.
         for i in self.acoustic_config["config"]:
             if i["type"] == "anchor":
                 if i["modem"]["id"] == BeaconIndex:

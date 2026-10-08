@@ -84,7 +84,7 @@ class simulation():
             self.velocityPub = rospy.Publisher("TotalVelocity", PointStamped, queue_size=1)
 
             if self.acoustic_config["config"][0]["SimulationPath"]:
-                self.position_sub = rospy.Subscriber("/bluero/ground_truth/state", Odometry, self.subscrib_position)
+                self.position_sub = rospy.Subscriber("/bluerov/ground_truth/state", Odometry, self.subscrib_position)
             else:
                 self.position_sub = rospy.Subscriber("ground_truth/state", Odometry, self.subscrib_position)
             self.depth_sub = rospy.Subscriber("depth", Float32, self.subscrib_depth)
